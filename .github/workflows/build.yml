@@ -1,5 +1,8 @@
 name: Build
 
+# Modelled on klmz/m4b-player's iOS job: same Xcode selection, same secret names (so its
+# scripts/upload-github-secrets.sh works here with --repo klmz/miniem-ios), same team.
+
 on:
   push:
     branches: ["**"]
@@ -16,9 +19,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Select Xcode 26
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XCODE" ]; then
+            echo "::error::No Xcode 26 on this runner image. Available:" $(ls -d /Applications/Xcode*.app)
+            exit 1
+          fi
+          sudo xcode-select -s "$XCODE/Contents/Developer"
+          xcodebuild -version
+
       - name: Generate the Xcode project
-        env:
-          DEVELOPMENT_TEAM: ${{ vars.APPLE_TEAM_ID }}
         run: |
           brew install xcodegen
           xcodegen generate
@@ -28,78 +39,111 @@ jobs:
           # Runner images change their simulators; take whichever iPhone is there.
           DEVICE=$(xcrun simctl list devices available -j \
             | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; print(next(x['udid'] for r in d.values() for x in r if x['name'].startswith('iPhone')))")
+          set -o pipefail
           xcodebuild test -project Miniem.xcodeproj -scheme Miniem \
-            -destination "id=$DEVICE" CODE_SIGNING_ALLOWED=NO | xcpretty || exit ${PIPESTATUS[0]}
+            -destination "id=$DEVICE" CODE_SIGNING_ALLOWED=NO | xcpretty
 
   testflight:
     name: Distribute to TestFlight
     needs: test
     # Only main reaches a phone, and the signing key never meets a pull request.
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
     runs-on: macos-15
+    env:
+      TEAM_ID: "9YUWU76L6V"
     steps:
       - uses: actions/checkout@v4
 
       - name: Check configuration
         id: config
         env:
-          KEY: ${{ secrets.ASC_KEY_P8 }}
-          KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ISSUER: ${{ secrets.ASC_ISSUER_ID }}
-          TEAM: ${{ vars.APPLE_TEAM_ID }}
+          ASC_KEY: ${{ secrets.APP_STORE_CONNECT_KEY_BASE64 }}
+          ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
         run: |
           missing=""
-          [ -z "$KEY" ] && missing="$missing ASC_KEY_P8"
-          [ -z "$KEY_ID" ] && missing="$missing ASC_KEY_ID"
-          [ -z "$ISSUER" ] && missing="$missing ASC_ISSUER_ID"
-          [ -z "$TEAM" ] && missing="$missing APPLE_TEAM_ID(variable)"
+          [ -z "$ASC_KEY" ] && missing="$missing APP_STORE_CONNECT_KEY_BASE64"
+          [ -z "$ASC_KEY_ID" ] && missing="$missing APP_STORE_CONNECT_KEY_ID"
+          [ -z "$ASC_ISSUER_ID" ] && missing="$missing APP_STORE_CONNECT_ISSUER_ID"
           if [ -n "$missing" ]; then
             echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Nothing distributed; missing:$missing"
+            echo "::notice::Nothing distributed; missing secret(s):$missing"
           else
             echo "configured=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Write the App Store Connect key
+      - name: Select Xcode 26
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XCODE" ]; then
+            echo "::error::No Xcode 26 on this runner image. Available:" $(ls -d /Applications/Xcode*.app)
+            exit 1
+          fi
+          sudo xcode-select -s "$XCODE/Contents/Developer"
+          xcodebuild -version
+
+      - name: Restore GoogleService-Info.plist
+        # Optional, and not a secret: committing it to the repository root works too.
+        env:
+          PLIST: ${{ secrets.GOOGLE_SERVICE_INFO_PLIST }}
+        run: |
+          if [ -n "$PLIST" ] && [ ! -f GoogleService-Info.plist ]; then
+            printf '%s' "$PLIST" > GoogleService-Info.plist
+          fi
+
+      - name: Set up the App Store Connect key
         if: steps.config.outputs.configured == 'true'
         env:
-          KEY: ${{ secrets.ASC_KEY_P8 }}
+          ASC_KEY: ${{ secrets.APP_STORE_CONNECT_KEY_BASE64 }}
+          ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
         run: |
-          printf '%s' "$KEY" > "$RUNNER_TEMP/asc.p8"
-          chmod 600 "$RUNNER_TEMP/asc.p8"
+          mkdir -p "$HOME/.appstoreconnect/private_keys"
+          printf '%s' "$ASC_KEY" | base64 -d > "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+          chmod 600 "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"
 
       - name: Generate the Xcode project
         if: steps.config.outputs.configured == 'true'
-        env:
-          DEVELOPMENT_TEAM: ${{ vars.APPLE_TEAM_ID }}
         run: |
           brew install xcodegen
           xcodegen generate
 
       - name: Archive
+        # Cloud signing: the app and its widget extension each need a profile, which
+        # Xcode fetches with the API key (it needs the Admin or App Manager role).
         if: steps.config.outputs.configured == 'true'
         env:
-          KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ISSUER: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
         run: |
+          set -o pipefail
           xcodebuild archive -project Miniem.xcodeproj -scheme Miniem -configuration Release \
             -destination generic/platform=iOS -archivePath build/Miniem.xcarchive \
             -allowProvisioningUpdates \
-            -authenticationKeyPath "$RUNNER_TEMP/asc.p8" \
-            -authenticationKeyID "$KEY_ID" -authenticationKeyIssuerID "$ISSUER" | xcpretty || exit ${PIPESTATUS[0]}
+            -authenticationKeyPath "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID" | xcpretty
+
+      - name: Upload the archive as an artifact
+        if: steps.config.outputs.configured == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: miniem-ios-xcarchive
+          path: build/Miniem.xcarchive
+          if-no-files-found: error
 
       - name: Upload to TestFlight
         if: steps.config.outputs.configured == 'true'
         env:
-          KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ISSUER: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
         run: |
+          /usr/libexec/PlistBuddy -c "Add :teamID string $TEAM_ID" ci/ExportOptions.plist
           xcodebuild -exportArchive -archivePath build/Miniem.xcarchive \
-            -exportOptionsPlist ci/ExportOptions.plist -exportPath build/export \
+            -exportOptionsPlist ci/ExportOptions.plist -exportPath "$RUNNER_TEMP/upload" \
             -allowProvisioningUpdates \
-            -authenticationKeyPath "$RUNNER_TEMP/asc.p8" \
-            -authenticationKeyID "$KEY_ID" -authenticationKeyIssuerID "$ISSUER"
+            -authenticationKeyPath "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID"
 
       - name: Remove the key from disk
         if: always()
-        run: rm -f "$RUNNER_TEMP/asc.p8"
+        run: rm -rf "$HOME/.appstoreconnect/private_keys"

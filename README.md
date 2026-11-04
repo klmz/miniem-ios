@@ -34,7 +34,7 @@ and the token (Keychain, after first unlock) from there.
 
 ```bash
 brew install xcodegen
-DEVELOPMENT_TEAM=<team id> BUILD_NUMBER=1 xcodegen generate
+BUILD_NUMBER=1 xcodegen generate
 open Miniem.xcodeproj
 ```
 
@@ -42,7 +42,11 @@ open Miniem.xcodeproj
 `google-services.json` it holds no secrets. A build without it works, just without push.
 
 CI (`.github/workflows/build.yml`) runs the tests on every push. On `main` it archives and
-uploads to TestFlight using an App Store Connect API key, with Xcode's cloud signing.
+uploads to TestFlight with Xcode 26 and cloud signing (team `9YUWU76L6V`). It is modelled on
+`klmz/m4b-player`'s iOS job and uses the same secrets, so that repository's
+`scripts/upload-github-secrets.sh --repo klmz/miniem-ios` sets them:
+`APP_STORE_CONNECT_KEY_BASE64`, `APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`,
+and optionally `GOOGLE_SERVICE_INFO_PLIST`.
 
 ## Not yet
 
