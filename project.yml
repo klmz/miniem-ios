@@ -25,13 +25,19 @@ targets:
     sources:
       - App
       - Shared
-      - path: GoogleService-Info.plist
-        optional: true
-        buildPhase: resources
     dependencies:
       - target: MiniemWidget
       - package: Firebase
         product: FirebaseMessaging
+    # Firebase's config is optional: a build without it runs, just without push. A file
+    # reference would make it required, so it is copied in only when it is there.
+    postBuildScripts:
+      - name: Copy GoogleService-Info.plist if present
+        basedOnDependencyAnalysis: false
+        script: |
+          if [ -f "$SRCROOT/GoogleService-Info.plist" ]; then
+            cp "$SRCROOT/GoogleService-Info.plist" "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/"
+          fi
     entitlements:
       path: App/Miniem.entitlements
       properties:
@@ -53,6 +59,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: nl.klmz.miniem
+        # The copy script above reads a file it cannot declare as a fixed input.
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
   MiniemWidget:
