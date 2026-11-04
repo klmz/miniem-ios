@@ -1,0 +1,105 @@
+name: Build
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  # Every TestFlight build needs a higher build number than the last one.
+  BUILD_NUMBER: ${{ github.run_number }}
+
+jobs:
+  test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate the Xcode project
+        env:
+          DEVELOPMENT_TEAM: ${{ vars.APPLE_TEAM_ID }}
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Unit tests
+        run: |
+          # Runner images change their simulators; take whichever iPhone is there.
+          DEVICE=$(xcrun simctl list devices available -j \
+            | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; print(next(x['udid'] for r in d.values() for x in r if x['name'].startswith('iPhone')))")
+          xcodebuild test -project Miniem.xcodeproj -scheme Miniem \
+            -destination "id=$DEVICE" CODE_SIGNING_ALLOWED=NO | xcpretty || exit ${PIPESTATUS[0]}
+
+  testflight:
+    name: Distribute to TestFlight
+    needs: test
+    # Only main reaches a phone, and the signing key never meets a pull request.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check configuration
+        id: config
+        env:
+          KEY: ${{ secrets.ASC_KEY_P8 }}
+          KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ISSUER: ${{ secrets.ASC_ISSUER_ID }}
+          TEAM: ${{ vars.APPLE_TEAM_ID }}
+        run: |
+          missing=""
+          [ -z "$KEY" ] && missing="$missing ASC_KEY_P8"
+          [ -z "$KEY_ID" ] && missing="$missing ASC_KEY_ID"
+          [ -z "$ISSUER" ] && missing="$missing ASC_ISSUER_ID"
+          [ -z "$TEAM" ] && missing="$missing APPLE_TEAM_ID(variable)"
+          if [ -n "$missing" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Nothing distributed; missing:$missing"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Write the App Store Connect key
+        if: steps.config.outputs.configured == 'true'
+        env:
+          KEY: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          printf '%s' "$KEY" > "$RUNNER_TEMP/asc.p8"
+          chmod 600 "$RUNNER_TEMP/asc.p8"
+
+      - name: Generate the Xcode project
+        if: steps.config.outputs.configured == 'true'
+        env:
+          DEVELOPMENT_TEAM: ${{ vars.APPLE_TEAM_ID }}
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Archive
+        if: steps.config.outputs.configured == 'true'
+        env:
+          KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ISSUER: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          xcodebuild archive -project Miniem.xcodeproj -scheme Miniem -configuration Release \
+            -destination generic/platform=iOS -archivePath build/Miniem.xcarchive \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/asc.p8" \
+            -authenticationKeyID "$KEY_ID" -authenticationKeyIssuerID "$ISSUER" | xcpretty || exit ${PIPESTATUS[0]}
+
+      - name: Upload to TestFlight
+        if: steps.config.outputs.configured == 'true'
+        env:
+          KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ISSUER: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          xcodebuild -exportArchive -archivePath build/Miniem.xcarchive \
+            -exportOptionsPlist ci/ExportOptions.plist -exportPath build/export \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/asc.p8" \
+            -authenticationKeyID "$KEY_ID" -authenticationKeyIssuerID "$ISSUER"
+
+      - name: Remove the key from disk
+        if: always()
+        run: rm -f "$RUNNER_TEMP/asc.p8"
