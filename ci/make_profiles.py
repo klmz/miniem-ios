@@ -13,6 +13,7 @@ from asc import AscError, call, token
 
 BUNDLES = ["nl.klmz.miniem", "nl.klmz.miniem.widget"]
 PREFIX = "Miniem CI "
+APP_GROUP = "group.nl.klmz.miniem"
 
 pem_path, serial, fragment_path = sys.argv[1], sys.argv[2].upper().lstrip("0"), sys.argv[3]
 bearer = token(pem_path)
@@ -63,6 +64,14 @@ for identifier in BUNDLES:
     })["data"]
     content = base64.b64decode(created["attributes"]["profileContent"])
     uuid = created["attributes"]["uuid"]
+    # The profile is a signed plist; its entitlements say what the App ID really allows.
+    start, end = content.find(b"<?xml"), content.find(b"</plist>")
+    entitlements = plistlib.loads(content[start:end + len(b"</plist>")]).get("Entitlements", {})
+    groups = entitlements.get("com.apple.security.application-groups", [])
+    if APP_GROUP not in groups:
+        print(f"::error::App ID {identifier} has no access to {APP_GROUP}. At developer.apple.com → "
+              f"Identifiers → {identifier} → App Groups → Configure, tick {APP_GROUP} and save.")
+        sys.exit(1)
     for directory in directories:
         with open(os.path.join(directory, f"{uuid}.mobileprovision"), "wb") as handle:
             handle.write(content)
