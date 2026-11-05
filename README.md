@@ -41,12 +41,16 @@ open Miniem.xcodeproj
 `GoogleService-Info.plist` (Firebase, for push) goes in the repository root. Like Android's
 `google-services.json` it holds no secrets. A build without it works, just without push.
 
-CI (`.github/workflows/build.yml`) runs the tests on every push. On `main` it archives and
-uploads to TestFlight with Xcode 26 and cloud signing (team `9YUWU76L6V`). It is modelled on
+CI (`.github/workflows/build.yml`) runs the tests on every push. On `main` it archives with an
+ad-hoc signature, then signs for the App Store with the team's distribution certificate and
+two App Store profiles it creates through the API on every run (one for the app, one for
+the widget), and uploads to TestFlight with altool. Xcode 26, team `9YUWU76L6V`. Xcode's
+cloud signing is not used: it refuses the API key with "Authentication failed". It is modelled on
 `klmz/m4b-player`'s iOS job and uses the same secrets, so that repository's
 `scripts/upload-github-secrets.sh --repo klmz/miniem-ios` sets them:
-`APP_STORE_CONNECT_KEY_BASE64`, `APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`,
-and optionally `GOOGLE_SERVICE_INFO_PLIST`.
+`APP_STORE_CONNECT_KEY_BASE64`, `APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`
+(an Admin team key), `IOS_CERTIFICATE_P12_BASE64` and `IOS_CERTIFICATE_PASSWORD` (the team's
+Apple Distribution certificate; one certificate signs every app in a team).
 
 ## Not yet
 

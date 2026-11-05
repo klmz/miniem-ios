@@ -2,11 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <!-- Export straight to App Store Connect, which puts the build on TestFlight. -->
+    <!-- An App Store .ipa; CI uploads it to TestFlight with altool in a separate step. -->
     <key>method</key>
     <string>app-store-connect</string>
     <key>destination</key>
-    <string>upload</string>
+    <string>export</string>
     <key>signingStyle</key>
     <string>automatic</string>
     <key>manageAppVersionAndBuildNumber</key>

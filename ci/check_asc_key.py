@@ -68,6 +68,17 @@ except urllib.error.HTTPError as error:
     sys.exit(1)
 
 print("App Store Connect accepted the key.")
+# Signing also needs the provisioning part of the API, which a weaker role does not reach.
+request = urllib.request.Request(
+    "https://api.appstoreconnect.apple.com/v1/certificates?limit=1",
+    headers={"Authorization": f"Bearer {token}"},
+)
+try:
+    with urllib.request.urlopen(request, timeout=20):
+        print("The key can manage certificates and profiles.")
+except urllib.error.HTTPError as error:
+    print(f"::error::The key cannot manage certificates and profiles ({error.code}); it needs the Admin role.")
+    sys.exit(1)
 if not apps:
     print("::warning::No App Store Connect app has bundle ID nl.klmz.miniem yet; the upload will fail without it.")
 else:
