@@ -56,9 +56,17 @@ targets:
         CFBundleURLTypes:
           - CFBundleURLSchemes: [miniem]
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        # iPad apps must allow every orientation (multitasking), or App Store Connect
+        # rejects the upload.
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: nl.klmz.miniem
+        TARGETED_DEVICE_FAMILY: "1,2"
         # The copy script above reads a file it cannot declare as a fixed input.
         ENABLE_USER_SCRIPT_SANDBOXING: NO
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
