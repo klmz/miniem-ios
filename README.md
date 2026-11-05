@@ -52,6 +52,13 @@ cloud signing is not used: it refuses the API key with "Authentication failed". 
 (an Admin team key), `IOS_CERTIFICATE_P12_BASE64` and `IOS_CERTIFICATE_PASSWORD` (the team's
 Apple Distribution certificate; one certificate signs every app in a team).
 
+The certificate is "Miniem CI": an Apple Distribution certificate used only by CI, shared
+with `klmz/m4b-player` and kept apart from any certificate on a Mac, so it can be revoked on
+its own if the secrets ever leak (builds already on TestFlight keep working). To replace it:
+make a key and CSR with `openssl`, create an Apple Distribution certificate from the CSR at
+developer.apple.com, combine both into a `.p12` (`openssl pkcs12 -export`), and set the two
+secrets on both repositories.
+
 ## Not yet
 
 - Live Activities for focus cards (lock screen / Dynamic Island, updated by push).
