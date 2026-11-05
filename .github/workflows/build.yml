@@ -106,6 +106,17 @@ jobs:
           printf '%s' "$ASC_KEY" | base64 -d > "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"
           chmod 600 "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"
 
+      - name: Check the App Store Connect key
+        # Prints only shapes and Apple's answer, never the values. "Authentication failed"
+        # from xcodebuild says nothing about which part is wrong; this does.
+        if: steps.config.outputs.configured == 'true'
+        env:
+          ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          python3 -m pip install --quiet --break-system-packages pyjwt cryptography
+          python3 ci/check_asc_key.py "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+
       - name: Generate the Xcode project
         if: steps.config.outputs.configured == 'true'
         run: |
