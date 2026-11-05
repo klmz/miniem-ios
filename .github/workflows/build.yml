@@ -39,9 +39,13 @@ jobs:
           # Runner images change their simulators; take whichever iPhone is there.
           DEVICE=$(xcrun simctl list devices available -j \
             | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; print(next(x['udid'] for r in d.values() for x in r if x['name'].startswith('iPhone')))")
+          mkdir -p build
           set -o pipefail
+          # xcpretty keeps the log readable but drops error details, so the raw log is kept
+          # and its errors printed when the build fails.
           xcodebuild test -project Miniem.xcodeproj -scheme Miniem \
-            -destination "id=$DEVICE" CODE_SIGNING_ALLOWED=NO | xcpretty
+            -destination "id=$DEVICE" CODE_SIGNING_ALLOWED=NO 2>&1 | tee build/test.log | xcpretty \
+            || { grep -E "error:|failed|Error Domain" build/test.log | head -60; exit 1; }
 
   testflight:
     name: Distribute to TestFlight
@@ -116,12 +120,15 @@ jobs:
           ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
         run: |
+          mkdir -p build
           set -o pipefail
           xcodebuild archive -project Miniem.xcodeproj -scheme Miniem -configuration Release \
             -destination generic/platform=iOS -archivePath build/Miniem.xcarchive \
             -allowProvisioningUpdates \
             -authenticationKeyPath "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8" \
-            -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID" | xcpretty
+            -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            2>&1 | tee build/archive.log | xcpretty \
+            || { grep -E "error:|Error Domain|No profiles|provisioning|signing|certificate" build/archive.log | sort -u | head -60; exit 1; }
 
       - name: Upload the archive as an artifact
         if: steps.config.outputs.configured == 'true'
@@ -130,6 +137,13 @@ jobs:
           name: miniem-ios-xcarchive
           path: build/Miniem.xcarchive
           if-no-files-found: error
+
+      - name: Keep the build log
+        if: failure() && steps.config.outputs.configured == 'true'
+        uses: actions/upload-artifact@v5
+        with:
+          name: archive-log
+          path: build/*.log
 
       - name: Upload to TestFlight
         if: steps.config.outputs.configured == 'true'
