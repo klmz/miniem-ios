@@ -124,22 +124,30 @@ jobs:
           xcodegen generate
 
       - name: Archive
-        # Cloud signing: the app and its widget extension each need a profile, which
-        # Xcode fetches with the API key (it needs the Admin or App Manager role).
+        # Archived with an ad-hoc signature: no certificate or profile needed, and the
+        # entitlements (App Group, push) are still embedded. Letting xcodebuild sign here
+        # makes it create a development certificate and profile through the API, which
+        # fails with "Authentication failed" even with a valid key — m4b-player avoids the
+        # same trap by archiving unsigned. The real signing happens at export, below.
         if: steps.config.outputs.configured == 'true'
-        env:
-          ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
         run: |
           mkdir -p build
           set -o pipefail
           xcodebuild archive -project Miniem.xcodeproj -scheme Miniem -configuration Release \
             -destination generic/platform=iOS -archivePath build/Miniem.xcarchive \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8" \
-            -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGNING_REQUIRED=NO PROVISIONING_PROFILE_SPECIFIER= DEVELOPMENT_TEAM="$TEAM_ID" \
             2>&1 | tee build/archive.log | xcpretty \
             || { grep -E "error:|Error Domain|No profiles|provisioning|signing|certificate" build/archive.log | sort -u | head -60; exit 1; }
+
+      - name: Show the archived entitlements
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          for bundle in build/Miniem.xcarchive/Products/Applications/Miniem.app \
+                        build/Miniem.xcarchive/Products/Applications/Miniem.app/PlugIns/MiniemWidget.appex; do
+            echo "== $bundle"
+            codesign -d --entitlements - --xml "$bundle" 2>/dev/null | plutil -p - || echo "(no entitlements)"
+          done
 
       - name: Upload the archive as an artifact
         if: steps.config.outputs.configured == 'true'
